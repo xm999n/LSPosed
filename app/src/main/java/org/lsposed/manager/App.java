@@ -27,65 +27,30 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.provider.MediaStore;
-import android.provider.Settings;
 import android.system.Os;
-import android.text.TextUtils;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatDelegate;
-import androidx.preference.PreferenceManager;
-
 import org.lsposed.hiddenapibypass.HiddenApiBypass;
-import org.lsposed.manager.adapters.AppHelper;
 import org.lsposed.manager.receivers.LSPManagerServiceHolder;
-import org.lsposed.manager.repo.RepoLoader;
-import org.lsposed.manager.util.CloudflareDNS;
+import org.lsposed.manager.util.AppHelper;
 import org.lsposed.manager.util.ModuleUtil;
-import org.lsposed.manager.util.ThemeUtil;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.FutureTask;
-
-import okhttp3.Cache;
-import okhttp3.OkHttpClient;
-import okhttp3.logging.HttpLoggingInterceptor;
-import rikka.core.os.FileUtils;
-import rikka.material.app.LocaleDelegate;
 
 public class App extends Application {
     public static final int PER_USER_RANGE = 100000;
-    public static final FutureTask<String> HTML_TEMPLATE = new FutureTask<>(() -> readWebviewHTML("template.html"));
-    public static final FutureTask<String> HTML_TEMPLATE_DARK = new FutureTask<>(() -> readWebviewHTML("template_dark.html"));
-
-    private static String readWebviewHTML(String name) {
-        try {
-            var input = App.getInstance().getAssets().open("webview/" + name);
-            var result = new ByteArrayOutputStream(1024);
-            FileUtils.copy(input, result);
-            return result.toString(StandardCharsets.UTF_8.name());
-        } catch (IOException e) {
-            Log.e(App.TAG, "read webview HTML", e);
-            return "<html dir\"@dir@\"><body>@body@</body></html>";
-        }
-    }
-
     static {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             HiddenApiBypass.addHiddenApiExemptions("");
@@ -96,12 +61,8 @@ public class App extends Application {
                 var list = AppHelper.getAppList(false);
                 var pm = App.getInstance().getPackageManager();
                 list.parallelStream().forEach(i -> AppHelper.getAppLabel(i, pm));
-                AppHelper.getDenyList(false);
                 ModuleUtil.getInstance();
-                RepoLoader.getInstance();
             });
-            App.getExecutorService().submit(HTML_TEMPLATE);
-            App.getExecutorService().submit(HTML_TEMPLATE_DARK);
             return false;
         });
     }
@@ -112,18 +73,11 @@ public class App extends Application {
     private static final String ACTION_USER_INFO_CHANGED = "android.intent.action.USER_INFO_CHANGED";
     private static final String EXTRA_REMOVED_FOR_ALL_USERS = "android.intent.extra.REMOVED_FOR_ALL_USERS";
     private static App instance = null;
-    private static OkHttpClient okHttpClient;
-    private static Cache okHttpCache;
-    private SharedPreferences pref;
     private static final ExecutorService executorService = Executors.newCachedThreadPool();
     private static final Handler MainHandler = new Handler(Looper.getMainLooper());
 
     public static App getInstance() {
         return instance;
-    }
-
-    public static SharedPreferences getPreferences() {
-        return instance.pref;
     }
 
     public static ExecutorService getExecutorService() {
@@ -196,20 +150,9 @@ public class App extends Application {
         instance = this;
 
         setCrashReport();
-        pref = PreferenceManager.getDefaultSharedPreferences(this);
-        if (!pref.contains("doh")) {
-            var name = "private_dns_mode";
-            if ("hostname".equals(Settings.Global.getString(getContentResolver(), name))) {
-                pref.edit().putBoolean("doh", false).apply();
-            } else {
-                pref.edit().putBoolean("doh", true).apply();
-            }
-        }
-        AppCompatDelegate.setDefaultNightMode(ThemeUtil.getDarkTheme());
-        LocaleDelegate.setDefaultLocale(getLocale());
+
         var res = getResources();
         var config = res.getConfiguration();
-        config.setLocale(LocaleDelegate.getDefaultLocale());
         //noinspection deprecation
         res.updateConfiguration(config, res.getDisplayMetrics());
 
@@ -237,41 +180,5 @@ public class App extends Application {
                 }
             }
         }, intentFilter, Context.RECEIVER_NOT_EXPORTED);
-
-    }
-
-    @NonNull
-    public static OkHttpClient getOkHttpClient() {
-        if (okHttpClient != null) return okHttpClient;
-        var builder = new OkHttpClient.Builder()
-            .cache(getOkHttpCache())
-            .dns(new CloudflareDNS());
-        if (BuildConfig.DEBUG) {
-            var log = new HttpLoggingInterceptor();
-            log.setLevel(HttpLoggingInterceptor.Level.HEADERS);
-            builder.addInterceptor(log);
-        }
-        okHttpClient = builder.build();
-        return okHttpClient;
-    }
-
-    @NonNull
-    public static Cache getOkHttpCache() {
-        if (okHttpCache != null) return okHttpCache;
-        long size50MiB = 50 * 1024 * 1024;
-        okHttpCache = new Cache(new File(instance.getCacheDir(), "http_cache"), size50MiB);
-        return okHttpCache;
-    }
-
-    public static Locale getLocale(String tag) {
-        if (TextUtils.isEmpty(tag) || "SYSTEM".equals(tag)) {
-            return LocaleDelegate.getSystemLocale();
-        }
-        return Locale.forLanguageTag(tag);
-    }
-
-    public static Locale getLocale() {
-        String tag = getPreferences().getString("language", null);
-        return getLocale(tag);
     }
 }
