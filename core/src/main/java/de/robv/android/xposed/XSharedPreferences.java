@@ -28,8 +28,6 @@ import android.content.SharedPreferences;
 import android.os.Environment;
 import android.preference.PreferenceManager;
 
-import com.android.internal.util.XmlUtils;
-
 import org.lsposed.lspd.core.BuildConfig;
 import org.lsposed.lspd.util.MetaDataReader;
 import org.lsposed.lspd.util.Utils.Log;
@@ -39,6 +37,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.Path;
@@ -64,6 +64,7 @@ public final class XSharedPreferences implements SharedPreferences {
     private static final String TAG = "XSharedPreferences";
     private static final HashMap<WatchKey, PrefsData> sWatcherKeyInstances = new HashMap<>();
     private static final Object sContent = new Object();
+    private static final Method sReadMapXmlMethod;
     private static Thread sWatcherDaemon = null;
     private static WatchService sWatcher;
 
@@ -75,6 +76,18 @@ public final class XSharedPreferences implements SharedPreferences {
     private long mLastModified;
     private long mFileSize;
     private WatchKey mWatchKey;
+
+    static {
+        Method method = null;
+        try {
+            Class<?> xmlUtils = Class.forName("com.android.internal.util.XmlUtils");
+            method = xmlUtils.getDeclaredMethod("readMapXml", InputStream.class);
+            method.setAccessible(true);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to find com.android.internal.util.XmlUtils.readMapXml", e);
+        }
+        sReadMapXmlMethod = method;
+    }
 
     private static void initWatcherDaemon() {
         sWatcherDaemon = new Thread() {
@@ -325,6 +338,21 @@ public final class XSharedPreferences implements SharedPreferences {
         }.start();
     }
 
+    private Map<?, ?> performReadMapXml(InputStream str) throws XmlPullParserException, IOException {
+        try {
+            if (sReadMapXmlMethod == null) throw new IOException("Internal API not found");
+            return (Map<?, ?>) sReadMapXmlMethod.invoke(null, str);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof XmlPullParserException) throw (XmlPullParserException) cause;
+            if (cause instanceof IOException) throw (IOException) cause;
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            throw new RuntimeException(cause);
+        } catch (IllegalAccessException e) {
+            throw new IOException("Access denied to internal API", e);
+        }
+    }
+
     @SuppressWarnings({"rawtypes", "unchecked"})
     private void loadFromDiskLocked() {
         if (mLoaded) {
@@ -336,7 +364,7 @@ public final class XSharedPreferences implements SharedPreferences {
         try {
             result = SELinuxHelper.getAppDataFileService().getFileInputStream(mFilename, mFileSize, mLastModified);
             if (result.stream != null) {
-                map = XmlUtils.readMapXml(result.stream);
+                map = performReadMapXml(result.stream);
                 result.stream.close();
             } else {
                 // The file is unchanged, keep the current values

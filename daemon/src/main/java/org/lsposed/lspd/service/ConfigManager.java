@@ -97,7 +97,7 @@ public class ConfigManager {
 
     private boolean verboseLog = true;
     private boolean logWatchdog = true;
-    private boolean dexObfuscate = true;
+    private boolean dexObfuscate = !BuildConfig.DEBUG;
     private boolean enableStatusNotification = true;
     private Path miscPath = null;
 
@@ -274,7 +274,7 @@ public class ConfigManager {
         logWatchdog = bool == null || (boolean) bool;
 
         bool = config.get("enable_dex_obfuscate");
-        dexObfuscate = bool == null || (boolean) bool;
+        dexObfuscate = bool == null ? !BuildConfig.DEBUG : (boolean) bool;
 
         bool = config.get("enable_auto_add_shortcut");
         if (bool != null) {
@@ -288,8 +288,17 @@ public class ConfigManager {
         var set = (Set<String>) config.get("scope_request_blocked");
         scopeRequestBlocked = set == null ? new HashSet<>() : set;
 
-        // Don't migrate to ConfigFileManager, as XSharedPreferences will be restored soon
-        String string = (String) config.get("misc_path");
+        setupMiscPath();
+
+        updateManager(false);
+
+        cacheHandler.post(this::getPreloadDex);
+    }
+
+    private void setupMiscPath() {
+        if (miscPath != null) return;
+
+        String string = (String) getModulePrefs("lspd", 0, "config").get("misc_path");
         if (string == null) {
             miscPath = Paths.get("/data", "misc", UUID.randomUUID().toString());
             updateModulePrefs("lspd", 0, "config", "misc_path", miscPath.toString());
@@ -303,10 +312,6 @@ public class ConfigManager {
         } catch (IOException e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
-
-        updateManager(false);
-
-        cacheHandler.post(this::getPreloadDex);
     }
 
     public synchronized void updateManager(boolean uninstalled) {
@@ -1005,14 +1010,14 @@ public class ConfigManager {
 
     public void setVerboseLog(boolean on) {
         if (BuildConfig.DEBUG) return;
+        updateModulePrefs("lspd", 0, "config", "enable_verbose_log", on);
+        verboseLog = on;
         var logcatService = ServiceManager.getLogcatService();
         if (on) {
             logcatService.startVerbose();
         } else {
             logcatService.stopVerbose();
         }
-        updateModulePrefs("lspd", 0, "config", "enable_verbose_log", on);
-        verboseLog = on;
     }
 
     public boolean verboseLog() {
@@ -1117,6 +1122,7 @@ public class ConfigManager {
     }
 
     public String getPrefsPath(String packageName, int uid) {
+        setupMiscPath();
         int userId = uid / PER_USER_RANGE;
         var path = miscPath.resolve("prefs" + (userId == 0 ? "" : String.valueOf(userId))).resolve(packageName);
         var module = cachedModule.getOrDefault(packageName, null);
