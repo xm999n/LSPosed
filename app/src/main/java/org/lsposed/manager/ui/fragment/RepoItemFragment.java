@@ -109,6 +109,8 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
     OnlineModule module;
     private ReleaseAdapter releaseAdapter;
     private InformationAdapter informationAdapter;
+    @Nullable
+    private ReadmeFragment readmeFragment;
 
     @Nullable
     @Override
@@ -161,6 +163,9 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
             if (!safeNavigate(R.id.action_repo_item_fragment_to_repo_fragment)) {
                 safeNavigate(R.id.repo_nav);
             }
+        } else if (TextUtils.isEmpty(module.getReadmeHTML())) {
+            // modules.json does not include readmeHTML; fetch module/{name}.json
+            RepoLoader.getInstance().loadRemoteReleases(module.getName());
         }
     }
 
@@ -258,11 +263,15 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
         super.onDestroyView();
         RepoLoader.getInstance().removeListener(this);
         binding = null;
+        readmeFragment = null;
     }
 
     @Override
     public void onModuleReleasesLoaded(OnlineModule module) {
         this.module = module;
+        if (readmeFragment != null) {
+            runOnUiThread(() -> readmeFragment.updateReadme(module.getReadmeHTML()));
+        }
         var repoLoader = RepoLoader.getInstance();
         if (releaseAdapter != null) {
             runAsync(releaseAdapter::loadItems);
@@ -525,9 +534,9 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
         }
     }
 
-    private static class PagerAdapter extends FragmentStateAdapter {
+    private class PagerAdapter extends FragmentStateAdapter {
 
-        public PagerAdapter(@NonNull Fragment fragment) {
+        PagerAdapter(@NonNull Fragment fragment) {
             super(fragment);
         }
 
@@ -538,7 +547,7 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
             bundle.putInt("position", position);
             Fragment f;
             if (position == 0) {
-                f = new ReadmeFragment();
+                f = readmeFragment = new ReadmeFragment();
             } else if (position == 1) {
                 f = new RecyclerviewFragment();
             } else {
@@ -614,6 +623,13 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
     public static class ReadmeFragment extends BorderFragment {
         ItemRepoReadmeBinding binding;
 
+        void updateReadme(@Nullable String readmeHTML) {
+            if (binding == null) return;
+            var parent = getParentFragment();
+            if (!(parent instanceof RepoItemFragment repoItemFragment)) return;
+            repoItemFragment.renderGithubMarkdown(binding.readme, readmeHTML);
+        }
+
         @Nullable
         @Override
         public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -626,7 +642,7 @@ public class RepoItemFragment extends BaseFragment implements RepoLoader.RepoLis
             }
             var repoItemFragment = (RepoItemFragment) parent;
             binding = ItemRepoReadmeBinding.inflate(getLayoutInflater(), container, false);
-            repoItemFragment.renderGithubMarkdown(binding.readme, repoItemFragment.module.getReadmeHTML());
+            updateReadme(repoItemFragment.module.getReadmeHTML());
             borderView = binding.scrollView;
             return binding.getRoot();
         }
