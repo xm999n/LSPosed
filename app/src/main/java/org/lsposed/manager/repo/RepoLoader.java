@@ -33,6 +33,8 @@ import org.lsposed.manager.R;
 import org.lsposed.manager.repo.model.OnlineModule;
 import org.lsposed.manager.repo.model.Release;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -46,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.GZIPInputStream;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -77,6 +80,7 @@ public class RepoLoader {
     private final Set<RepoListener> listeners = ConcurrentHashMap.newKeySet();
     private boolean repoLoaded = false;
     private static final String originRepoUrl = "https://modules.lsposed.org/";
+    private static final String modulesJsonPath = "modules.json?sign=2cbdcb000fd096c89ddd1f810a571cc6&t=1780321153";
     private static final String backupRepoUrl = "https://modules-blogcdn.lsposed.org/";
 
     private static final String secondBackupRepoUrl = "https://modules-cloudflare.lsposed.org/";
@@ -99,13 +103,13 @@ public class RepoLoader {
     synchronized public void loadRemoteData() {
         repoLoaded = false;
         try {
-            try (var response = App.getOkHttpClient().newCall(new Request.Builder().url(repoUrl + "modules.json").build()).execute()) {
+            try (var response = App.getOkHttpClient().newCall(new Request.Builder().url(repoUrl + modulesJsonPath).build()).execute()) {
 
                 if (response.isSuccessful()) {
                     ResponseBody body = response.body();
                     if (body != null) {
                         try {
-                            String bodyString = body.string();
+                            String bodyString = readBodyString(body);
                             Files.write(repoFile, bodyString.getBytes(StandardCharsets.UTF_8));
                             loadLocalData(false);
                         } catch (Throwable t) {
@@ -130,6 +134,22 @@ public class RepoLoader {
                 loadRemoteData();
             }
         }
+    }
+
+    private static String readBodyString(ResponseBody body) throws IOException {
+        var bytes = body.bytes();
+        if (bytes.length >= 2 && (bytes[0] & 0xff) == 0x1f && (bytes[1] & 0xff) == 0x8b) {
+            try (var input = new GZIPInputStream(new ByteArrayInputStream(bytes));
+                 var output = new ByteArrayOutputStream()) {
+                var buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, read);
+                }
+                bytes = output.toByteArray();
+            }
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     synchronized public void loadLocalData(boolean updateRemoteRepo) {
@@ -271,7 +291,7 @@ public class RepoLoader {
                     ResponseBody body = response.body();
                     if (body != null) {
                         try {
-                            String bodyString = body.string();
+                            String bodyString = readBodyString(body);
                             Gson gson = new Gson();
                             OnlineModule module = gson.fromJson(bodyString, OnlineModule.class);
                             module.releasesLoaded = true;
